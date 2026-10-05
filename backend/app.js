@@ -40,7 +40,7 @@ app.use('/api/payment', require('./routes/payment'));
 app.use('/api/profile', require('./routes/profile'));
 app.use('/api/education', require('./routes/education'));
 app.use('/api/admin', require('./routes/admin'));
-
+app.use('/api/kyc', require('./routes/kyc'));
 // Socket.IO برای نوتیفیکیشن زنده
 io.on('connection', (socket) => {
   console.log('🔌 User connected:', socket.id);
