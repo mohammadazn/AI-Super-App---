@@ -22,7 +22,6 @@ router.post('/send-code', [
   body('phone')
     .matches(/^09[0-9]{9}$/)
     .withMessage('شماره موبایل معتبر نیست')
-    .normalizeMobile(),
   validate
 ], async (req, res) => {
   try {
