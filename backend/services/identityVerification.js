@@ -1,197 +1,277 @@
 const axios = require('axios');
-const {
-  IDENTITY_PROVIDER,
-  provider,
-  mockMode,
-  shahkarEnabled,
-  identityInquiryEnabled
-} = require('../config/identityProviders');
+
+const config = require(
+  '../config/identityProviders'
+);
 
 class IdentityVerificationService {
   /**
    * شاهکار Lite:
-   * تطبیق کد ملی با شماره موبایل تاییدشده کاربر
+   * بررسی تطبیق کد ملی با شماره موبایل
    */
-  static async verifyShahkarLite({ nationalId, mobileNumber }) {
-    if (mockMode || !shahkarEnabled) {
+  static async shahkarLite({
+    nationalId,
+    mobileNumber
+  }) {
+    // حالت Mock: بدون ارسال درخواست واقعی
+    if (
+      config.mockMode ||
+      !config.shahkarEnabled
+    ) {
       return {
         success: true,
-        provider: 'mock',
+
         isMatched: null,
+
         status: 'pending_manual_activation',
+
+        provider: 'mock',
+
+        referenceId:
+          `mock-shahkar-${Date.now()}`,
+
         message:
-          'سرویس شاهکار Lite هنوز در حالت آزمایشی است و پس از دریافت مجوز فعال می‌شود.',
-        referenceId: `mock-shahkar-${Date.now()}`
+          'شاهکار در حالت آزمایشی Mock است.'
       };
     }
 
-    if (IDENTITY_PROVIDER === 'paystar') {
-      return this.verifyWithPaystar({ nationalId, mobileNumber });
+    // سرویس تستی
+    if (
+      config.provider === 'test_shahkar'
+    ) {
+      return this.verifyWithTestShahkar({
+        nationalId,
+        mobileNumber
+      });
     }
 
-    if (IDENTITY_PROVIDER === 'finnotech') {
-      return this.verifyWithFinoTech({ nationalId, mobileNumber });
+    // سرویس PayStar عملیاتی
+    if (
+      config.provider === 'paystar'
+    ) {
+      return this.verifyWithPaystar({
+        nationalId,
+        mobileNumber
+      });
     }
 
-    throw new Error('Identity provider is not configured correctly');
+    throw new Error(
+      'Identity provider is not configured correctly'
+    );
   }
 
   /**
-   * استعلام مشخصات هویتی:
-   * بهتر است فقط نتیجه تطبیق ذخیره شود، نه اطلاعات کامل هویتی.
+   * ساخت Header با توجه به نوع Authentication
    */
-  static async inquireIdentity({
+  static buildTestHeaders() {
+    const provider = config.testShahkar;
+
+    const headers = {
+      'Content-Type': 'application/json'
+    };
+
+    // Bearer Token
+    if (
+      provider.authType === 'bearer' &&
+      provider.token
+    ) {
+      headers[provider.authHeader] =
+        `${provider.authPrefix} ${provider.token}`;
+    }
+
+    // API Key
+    if (
+      provider.authType === 'api_key' &&
+      provider.apiKey
+    ) {
+      headers[provider.apiKeyHeader] =
+        provider.apiKey;
+    }
+
+    // Basic Auth
+    if (
+      provider.authType === 'basic' &&
+      provider.token
+    ) {
+      headers[provider.authHeader] =
+        `Basic ${provider.token}`;
+    }
+
+    return headers;
+  }
+
+  /**
+   * اتصال به API تست شاهکار
+   *
+   * مهم:
+   * ممکن است نام فیلدهای API تستی فرق داشته باشد.
+   * بعد از فرستادن نمونه Request از EchoCopy،
+   * فقط بخش body و parseResponse را دقیقاً مطابق آن اصلاح می‌کنیم.
+   */
+  static async verifyWithTestShahkar({
+    nationalId,
+    mobileNumber
+  }) {
+    const provider = config.testShahkar;
+
+    if (!provider.url) {
+      throw new Error(
+        'TEST_SHAHKAR_URL در فایل .env وارد نشده است'
+      );
+    }
+
+    const response = await axios.post(
+      provider.url,
+      {
+        national_id: nationalId,
+        mobile_number: mobileNumber
+      },
+      {
+        headers: this.buildTestHeaders(),
+
+        timeout: 15000
+      }
+    );
+
+    const data = response.data;
+
+    /**
+     * پاسخ APIهای تستی ممکن است شکل متفاوتی داشته باشد.
+     * این حالت‌های رایج را بررسی می‌کنیم.
+     */
+    const isMatched =
+      data?.data?.is_matched ??
+      data?.data?.matched ??
+      data?.is_matched ??
+      data?.matched ??
+      data?.result?.matched ??
+      null;
+
+    const referenceId =
+      data?.data?.reference_id ??
+      data?.data?.tracking_code ??
+      data?.reference_id ??
+      data?.tracking_code ??
+      data?.trackingCode ??
+      `test-shahkar-${Date.now()}`;
+
+    const message =
+      data?.message ??
+      data?.data?.message ??
+      'پاسخ از سرویس تست شاهکار دریافت شد';
+
+    return {
+      success: true,
+
+      provider: 'test_shahkar',
+
+      isMatched:
+        typeof isMatched === 'boolean'
+          ? isMatched
+          : null,
+
+      status: 'completed',
+
+      referenceId,
+
+      message,
+
+      rawResponse: data
+    };
+  }
+
+  /**
+   * اتصال به PayStar عملیاتی
+   */
+  static async verifyWithPaystar({
+    nationalId,
+    mobileNumber
+  }) {
+    const provider = config.paystar;
+
+    const response = await axios.post(
+      provider.shahkarUrl,
+      {
+        application_id:
+          provider.applicationId,
+
+        access_password:
+          provider.accessPassword,
+
+        national_id: nationalId,
+
+        mobile_number: mobileNumber
+      },
+      {
+        headers: {
+          Authorization:
+            `Bearer ${provider.apiKey}`,
+
+          'Content-Type':
+            'application/json'
+        },
+
+        timeout: 15000
+      }
+    );
+
+    const data = response.data;
+
+    return {
+      success: data.status === 1,
+
+      provider: 'paystar',
+
+      isMatched:
+        data?.data?.is_matched === true,
+
+      status:
+        data.status === 1
+          ? 'completed'
+          : 'failed',
+
+      referenceId:
+        data?.data?.reference_id || null,
+
+      message: data.message,
+
+      rawResponse: data
+    };
+  }
+
+  /**
+   * فعلاً برای استعلام مشخصات هویتی در حالت تست
+   */
+  static async identityInquiry({
     nationalId,
     birthDate,
     firstName,
     lastName
   }) {
-    if (mockMode || !identityInquiryEnabled) {
+    if (
+      config.mockMode ||
+      !config.identityInquiryEnabled
+    ) {
       return {
         success: true,
-        provider: 'mock',
-        status: 'pending_manual_activation',
+
         isMatched: null,
-        verifiedFirstName: null,
-        verifiedLastName: null,
+
+        status: 'pending_manual_activation',
+
+        provider: 'mock',
+
+        referenceId:
+          `mock-identity-${Date.now()}`,
+
         message:
-          'سرویس استعلام مشخصات هویتی هنوز در حالت آزمایشی است و پس از دریافت مجوز فعال می‌شود.',
-        referenceId: `mock-identity-${Date.now()}`
+          'استعلام مشخصات هویتی فعلاً در حالت آزمایشی است.'
       };
     }
 
-    /**
-     * مسیر و شکل پاسخ استعلام مشخصات هویتی بین Providerها متفاوت است.
-     * این بخش فقط بعد از دریافت قرارداد، مستندات رسمی و کلید API نهایی شود.
-     */
-    if (!provider?.identityInquiryUrl) {
-      throw new Error(
-        'Identity inquiry endpoint is not configured. Set PAYSTAR_IDENTITY_INQUIRY_URL after provider approval.'
-      );
-    }
-
-    const response = await axios.post(
-      provider.identityInquiryUrl,
-      {
-        application_id: provider.applicationId,
-        access_password: provider.accessPassword,
-        national_id: nationalId,
-        birth_date: birthDate,
-        first_name: firstName,
-        last_name: lastName
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${provider.apiKey}`,
-          'Content-Type': 'application/json'
-        },
-        timeout: 15000
-      }
+    throw new Error(
+      'برای استعلام مشخصات هویتی، Endpoint و مستندات رسمی Provider را وارد کنید.'
     );
-
-    const data = response.data;
-
-    return {
-      success: data.status === 1,
-      provider: 'paystar',
-      status: data.status === 1 ? 'completed' : 'failed',
-      isMatched: data?.data?.is_matched ?? null,
-
-      // فقط اگر سرویس‌دهنده رسماً برگرداند و مجاز به ذخیره باشی
-      verifiedFirstName: data?.data?.first_name || null,
-      verifiedLastName: data?.data?.last_name || null,
-
-      message: data.message,
-      referenceId: data?.data?.reference_id || null,
-      rawStatus: data.status
-    };
-  }
-
-  static async verifyWithPaystar({ nationalId, mobileNumber }) {
-    const response = await axios.post(
-      provider.shahkarUrl,
-      {
-        application_id: provider.applicationId,
-        access_password: provider.accessPassword,
-        national_id: nationalId,
-        mobile_number: mobileNumber
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${provider.apiKey}`,
-          'Content-Type': 'application/json'
-        },
-        timeout: 15000
-      }
-    );
-
-    const data = response.data;
-
-    return {
-      success: data.status === 1,
-      provider: 'paystar',
-      isMatched: data?.data?.is_matched === true,
-      status: data.status === 1 ? 'completed' : 'failed',
-      message: data.message,
-      referenceId: data?.data?.reference_id || null,
-      rawStatus: data.status
-    };
-  }
-
-  static async getFinoTechAccessToken() {
-    const tokenUrl = `${provider.baseUrl}/oauth2/token`;
-
-    const response = await axios.post(
-      tokenUrl,
-      new URLSearchParams({
-        grant_type: 'client_credentials',
-        client_id: provider.clientId,
-        client_secret: provider.clientSecret,
-        scope: provider.scope
-      }),
-      {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
-        },
-        timeout: 15000
-      }
-    );
-
-    return response.data.access_token;
-  }
-
-  static async verifyWithFinoTech({ nationalId, mobileNumber }) {
-    const accessToken = await this.getFinoTechAccessToken();
-
-    /**
-     * clientId و شکل Query/Body را طبق قرارداد فعال‌شده فینوتک تنظیم کن.
-     * مستندات فینوتک از Client Credentials و Scope مرتبط با شاهکار استفاده می‌کند.
-     */
-    const endpoint =
-      `${provider.baseUrl}/facility/v2/clients/${provider.clientId}/shahkar/verify`;
-
-    const response = await axios.get(endpoint, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`
-      },
-      params: {
-        nationalCode: nationalId,
-        mobile: mobileNumber
-      },
-      timeout: 15000
-    });
-
-    const data = response.data;
-
-    return {
-      success: true,
-      provider: 'finnotech',
-      isMatched: Boolean(data?.isMatched ?? data?.matched),
-      status: 'completed',
-      message: 'استعلام شاهکار انجام شد',
-      referenceId: data?.trackingCode || data?.referenceId || null,
-      rawStatus: data
-    };
   }
 }
 
