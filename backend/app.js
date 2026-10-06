@@ -90,3 +90,87 @@ server.listen(PORT, () => {
 });
 
 module.exports = { app, io };
+//new
+require('dotenv').config();
+
+const express = require('express');
+
+const helmet = require('helmet');
+
+const cors = require('cors');
+
+const rateLimit = require('express-rate-limit');
+
+const connectDatabase = require(
+  './config/database'
+);
+
+const app = express();
+
+app.use(helmet());
+
+app.use(
+  cors({
+    origin:
+      process.env.FRONTEND_URL
+        ?.split(',') || true
+  })
+);
+
+app.use(
+  express.json({
+    limit: '1mb'
+  })
+);
+
+app.use(
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 300
+  })
+);
+
+connectDatabase().catch((error) => {
+  console.error(error);
+
+  process.exit(1);
+});
+
+app.get('/health', (req, res) => {
+  res.json({
+    ok: true,
+    service: 'AI Super App KYC API'
+  });
+});
+
+app.use(
+  '/api/auth',
+  require('./routes/auth').router
+);
+
+app.use(
+  '/api/kyc',
+  require('./routes/kyc')
+);
+
+app.use(
+  '/api/admin/kyc',
+  require('./routes/adminKyc')
+);
+
+app.use((error, req, res, next) => {
+  console.error(error);
+
+  res.status(500).json({
+    success: false,
+    error: 'Server error'
+  });
+});
+
+const port = process.env.PORT || 3000;
+
+app.listen(port, () => {
+  console.log(
+    `🚀 API running on port ${port}`
+  );
+});
