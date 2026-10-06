@@ -90,3 +90,42 @@ userSchema.index({ phone: 1 });
 userSchema.index({ 'deviceInfo.deviceId': 1 });
 
 module.exports = mongoose.model('User', userSchema);
+
+//nwe
+const mongoose = require('mongoose');
+
+const userSchema = new mongoose.Schema({
+  phone: {
+    type: String,
+    required: true,
+    unique: true
+  },
+
+  phoneVerified: {
+    type: Boolean,
+    default: false
+  },
+
+  role: {
+    type: String,
+    enum: ['user', 'admin'],
+    default: 'user'
+  },
+
+  profile: {
+    firstName: String,
+    lastName: String
+  },
+
+  kycStatus: {
+    type: String,
+    default: 'not_started'
+  },
+
+  createdAt: {
+    type: Date,
+    default: Date.now
+  }
+});
+
+module.exports = mongoose.model('User', userSchema);
